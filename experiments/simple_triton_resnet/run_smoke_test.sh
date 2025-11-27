@@ -40,7 +40,7 @@ docker compose --profile triton up -d --build
 echo "==> Waiting for Triton to be ready..."
 # Wait for health
 for i in {1..60}; do
-  if curl -s http://localhost:8000/v2/health/ready | grep -q OK; then echo "Triton ready!"; break; fi
+  if curl -sf http://localhost:8000/v2/health/ready >/dev/null 2>&1; then echo "Triton ready!"; break; fi
   sleep 1
   if [ "$i" -eq 60 ]; then
     echo "Triton not ready after 60s. Printing logs..."

@@ -4,7 +4,8 @@ Triton HTTP client (official tritonclient) to run inference on ResNet50 using a 
 - Uses tritonclient[http]
 - Preprocess: resize to 224x224, NCHW, float32, ImageNet mean/std normalization
 - Input name: gpu_0/data_0
-- Output name: gpu_0/resnet_node_output_0
+- Output name: gpu_0/softmax_1
+- Model has max_batch_size: 0 (no batching), expects shape [1, 3, 224, 224]
 """
 import argparse
 import os
@@ -56,7 +57,7 @@ def main():
     p.add_argument("--dataset-dir", default="data/cifar-10-batches-py", help="Dataset folder under repo root data/")
     p.add_argument("--index", type=int, default=0, help="CIFAR image index (0-9999)")
     p.add_argument("--input-name", default="gpu_0/data_0", help="Model input name")
-    p.add_argument("--output-name", default="gpu_0/resnet_node_output_0", help="Model output name")
+    p.add_argument("--output-name", default="gpu_0/softmax_1", help="Model output name")
     args = p.parse_args()
 
     # Resolve dataset dir relative to repo root

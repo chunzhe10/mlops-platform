@@ -56,21 +56,22 @@ else
 fi
 
 # For this ResNet50 model, the actual input/output names from the ONNX are known
-# Input: gpu_0/data_0 (shape [-1, 3, 224, 224] - first dim is dynamic batch)
-# Output: gpu_0/resnet_node_output_0 (shape [-1, 1000])
+# The ONNX model has fixed batch size, so we disable batching (max_batch_size: 0)
+# Input: gpu_0/data_0 (shape [1, 3, 224, 224] - fixed batch of 1)
+# Output: gpu_0/softmax_1 (shape [1, 1000])
 cat > "${MODELS_DIR}/${MODEL_NAME}/config.pbtxt" <<EOF
 name: "${MODEL_NAME}"
 platform: "onnxruntime_onnx"
-max_batch_size: 1
+max_batch_size: 0
 input [ {
   name: "gpu_0/data_0"
   data_type: TYPE_FP32
-  dims: [ -1, 3, 224, 224 ]
+  dims: [ 1, 3, 224, 224 ]
 } ]
 output [ {
-  name: "gpu_0/resnet_node_output_0"
+  name: "gpu_0/softmax_1"
   data_type: TYPE_FP32
-  dims: [ -1, 1000 ]
+  dims: [ 1, 1000 ]
 } ]
 instance_group [ { kind: KIND_CPU } ]
 EOF
