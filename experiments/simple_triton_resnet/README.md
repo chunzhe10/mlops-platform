@@ -5,7 +5,8 @@ This experiment downloads a ResNet50 ONNX model into the Triton model repo, pull
 Prerequisites
 - Triton container running from repo root:
   - `docker compose --profile triton up -d --build`
-- Python 3 with `pip install pillow requests numpy`
+- Python 3 with deps:
+  - `pip install -r experiments/simple_triton_resnet/requirements.txt`
 
 Setup
 ```bash
@@ -28,3 +29,4 @@ python3 experiments/simple_triton_resnet/client.py --index 123
 Notes
 - This is a smoke test; CIFAR-10 labels do not correspond to ImageNet classes, so the top-5 indices are for connectivity sanity checking.
 - If the Triton server runs inside Docker, ensure ports 8000/8001/8002 are open and the model repository is mounted correctly (compose does this already).
+- The client uses the official Triton Python client over HTTP. Adjust `--server-url` if your server is elsewhere (default `localhost:8000`).
