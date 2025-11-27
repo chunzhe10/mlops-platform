@@ -21,16 +21,16 @@ This experiment:
 pip install -r experiments/simple_triton_resnet/requirements.txt
 
 # Run everything: setup model, download data, start Triton, run inference
-python experiments/simple_triton_resnet/client.py --smoke-test
+python experiments/simple_triton_resnet/setup.py --smoke-test
 ```
 
 **Option 2: Step-by-step**
 ```bash
-# 1. Setup (downloads model and dataset)
-python experiments/simple_triton_resnet/client.py --setup
+# 1. Setup everything
+python experiments/simple_triton_resnet/setup.py --all
 
-# 2. Start Triton manually
-docker compose --profile triton up -d --build
+# 2. Start Triton
+python experiments/simple_triton_resnet/setup.py --start-triton
 
 # 3. Run inference
 python experiments/simple_triton_resnet/client.py --index 0
@@ -38,37 +38,46 @@ python experiments/simple_triton_resnet/client.py --index 0
 
 ## Manual Setup
 
-The `client.py` script includes built-in setup functions. You can also run each step manually:
+The `setup.py` module manages infrastructure. Run each step individually:
 
-### 1. Setup Model and Data
+### 1. Setup Model
 
 ```bash
-# All-in-one setup command
-python experiments/simple_triton_resnet/client.py --setup
+# Download ResNet50 ONNX model
+python experiments/simple_triton_resnet/setup.py --model
 ```
 
-This downloads:
-- ResNet50 ONNX model to `triton/models/resnet50/1/model.onnx`
-- CIFAR-10 dataset to `data/cifar-10-batches-py/`
-
-### 2. Start Triton Server
+### 2. Download Dataset
 
 ```bash
-# Using Docker Compose profiles
+# Download CIFAR-10 dataset
+python experiments/simple_triton_resnet/setup.py --data
+```
+
+### 3. Start Triton Server
+
+```bash
+# Using setup.py (recommended)
+python experiments/simple_triton_resnet/setup.py --start-triton
+
+# Or using docker compose directly
 docker compose --profile triton up -d --build
 ```
 
-### 3. Run Inference
+### 4. Run Inference
 
 ```bash
 # Install dependencies
 pip install -r experiments/simple_triton_resnet/requirements.txt
 
-# Run inference on image index 0
+# Run inference on CIFAR-10 image
 python experiments/simple_triton_resnet/client.py --index 0
 
 # Try different images (0-9999)
 python experiments/simple_triton_resnet/client.py --index 123
+
+# Use custom image file
+python experiments/simple_triton_resnet/client.py --image path/to/image.jpg
 ```
 
 ## Model Configuration
@@ -114,14 +123,41 @@ curl http://localhost:8000/v2/models/resnet50
 ```
 experiments/simple_triton_resnet/
 ├── README.md              # Documentation
-├── client.py              # All-in-one: inference + setup + smoke test
+├── setup.py               # Infrastructure: model/data setup, Triton management
+├── client.py              # Inference: OOP client for predictions
 └── requirements.txt       # Python dependencies
 ```
 
-The client supports multiple modes:
-- `python client.py --index 0` - Run inference
-- `python client.py --setup` - Download model and data
-- `python client.py --smoke-test` - Full end-to-end test
+## Architecture (OOP Design)
+
+### setup.py - Infrastructure Management
+**Classes:**
+- `TritonSetup` - Model and dataset download/configuration
+- `TritonServer` - Server lifecycle (start, stop, health checks)
+- `SmokeTest` - End-to-end test orchestrator
+
+**Usage:**
+```bash
+python setup.py --model         # Download model
+python setup.py --data          # Download dataset
+python setup.py --all           # Setup everything
+python setup.py --start-triton  # Start server
+python setup.py --stop-triton   # Stop server
+python setup.py --smoke-test    # Full E2E test
+```
+
+### client.py - Inference Client
+**Classes:**
+- `TritonInferenceClient` - HTTP client for Triton server
+- `ImagePreprocessor` - ResNet50 preprocessing (resize, normalize)
+- `CIFAR10Dataset` - CIFAR-10 data loader
+
+**Usage:**
+```bash
+python client.py --index 0              # CIFAR-10 inference
+python client.py --image photo.jpg      # Custom image
+python client.py --top-k 10             # Top-10 predictions
+```
 
 ## Suggested Improvements
 

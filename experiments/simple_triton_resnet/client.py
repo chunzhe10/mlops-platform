@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """
-Triton ResNet50 Inference Client with built-in setup and smoke test.
+Triton ResNet50 Inference Client.
 
-Modes:
-  python client.py --index 0              # Run inference
-  python client.py --setup                # Setup model and data
-  python client.py --smoke-test           # Full end-to-end test
+Usage:
+  python client.py --index 0              # Run inference on CIFAR-10 image
+  python client.py --index 123            # Different image
+  python client.py --image path/to/img    # Custom image file
 """
 import argparse
-import os
 import pickle
-import subprocess
 import sys
-import time
 from pathlib import Path
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
@@ -23,258 +20,345 @@ import tritonclient.http as httpclient
 from tritonclient.utils import InferenceServerException
 
 
-def get_repo_root() -> Path:
-    """Get repository root directory."""
-    return Path(__file__).resolve().parent.parent.parent
+class ImagePreprocessor:
+    """Preprocess images for ResNet50 inference."""
+    
+    # ImageNet normalization constants
+    IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    TARGET_SIZE = (224, 224)
+    
+    @classmethod
+    def preprocess(cls, img: np.ndarray) -> np.ndarray:
+        """
+        Preprocess image for ResNet50 inference.
+        
+        Args:
+            img: Input image as numpy array (HWC, RGB, uint8)
+            
+        Returns:
+            Preprocessed tensor (1CHW, FP32, normalized)
+        """
+        # Resize to 224x224
+        pil_img = Image.fromarray(img)
+        pil_img = pil_img.resize(cls.TARGET_SIZE, Image.BILINEAR)
+        
+        # Convert to float32 and normalize to [0, 1]
+        arr = np.asarray(pil_img).astype(np.float32) / 255.0
+        
+        # Apply ImageNet normalization
+        arr = (arr - cls.IMAGENET_MEAN) / cls.IMAGENET_STD
+        
+        # Convert HWC to CHW
+        chw = np.transpose(arr, (2, 0, 1))
+        
+        # Add batch dimension: CHW -> 1CHW
+        nchw = np.expand_dims(chw, axis=0)
+        
+        return nchw
 
 
-def setup_model():
-    """Download ResNet50 model using triton/add_dummy_model.sh."""
-    print("==> Setting up ResNet50 model...")
-    repo_root = get_repo_root()
-    script = repo_root / "triton" / "add_dummy_model.sh"
+class CIFAR10Dataset:
+    """Load images from CIFAR-10 dataset."""
     
-    if not script.exists():
-        raise FileNotFoundError(f"Model setup script not found: {script}")
-    
-    subprocess.run(["bash", str(script), "resnet50", "1"], cwd=script.parent, check=True)
-    print("==> Model setup complete!")
-
-
-def download_data():
-    """Download CIFAR-10 dataset."""
-    print("==> Downloading CIFAR-10 dataset...")
-    repo_root = get_repo_root()
-    data_dir = repo_root / "data"
-    data_dir.mkdir(exist_ok=True)
-    
-    cifar_dir = data_dir / "cifar-10-batches-py"
-    if (cifar_dir / "data_batch_1").exists():
-        print(f"CIFAR-10 already exists at {cifar_dir}")
-        return
-    
-    # Download
-    cifar_url = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
-    cifar_tar = data_dir / "cifar-10-python.tar.gz"
-    
-    print(f"Downloading from {cifar_url}...")
-    subprocess.run(["curl", "-L", "--fail", "-o", str(cifar_tar), cifar_url], check=True)
-    
-    print("Extracting...")
-    subprocess.run(["tar", "-xzf", str(cifar_tar), "-C", str(data_dir)], check=True)
-    cifar_tar.unlink()
-    
-    print(f"==> CIFAR-10 downloaded to {cifar_dir}")
-
-
-def start_triton():
-    """Start Triton server using docker compose."""
-    print("==> Starting Triton server...")
-    repo_root = get_repo_root()
-    
-    # Stop existing
-    subprocess.run(
-        ["docker", "compose", "--profile", "triton", "down"],
-        cwd=repo_root,
-        capture_output=True
-    )
-    
-    # Start new
-    subprocess.run(
-        ["docker", "compose", "--profile", "triton", "up", "-d", "--build"],
-        cwd=repo_root,
-        check=True
-    )
-
-
-def wait_for_triton(timeout: int = 60):
-    """Wait for Triton to become ready."""
-    print("==> Waiting for Triton to be ready...")
-    url = "http://localhost:8000/v2/health/ready"
-    
-    for i in range(1, timeout + 1):
-        try:
-            result = subprocess.run(
-                ["curl", "-sf", url],
-                capture_output=True,
-                timeout=5
+    def __init__(self, dataset_dir: Path):
+        """
+        Initialize CIFAR-10 dataset loader.
+        
+        Args:
+            dataset_dir: Directory containing CIFAR-10 batches
+        """
+        self.dataset_dir = dataset_dir
+        
+    def load_image(self, index: int, batch_num: int = 1) -> Tuple[np.ndarray, int]:
+        """
+        Load a CIFAR-10 image.
+        
+        Args:
+            index: Image index within batch (0-9999)
+            batch_num: Batch number (1-5)
+            
+        Returns:
+            Tuple of (image array HWC RGB uint8, label)
+            
+        Raises:
+            FileNotFoundError: If dataset not found
+            IndexError: If index out of range
+        """
+        batch_path = self.dataset_dir / f"data_batch_{batch_num}"
+        if not batch_path.exists():
+            raise FileNotFoundError(
+                f"Could not find {batch_path}. "
+                "Run 'python setup.py --data' to download."
             )
-            if result.returncode == 0:
-                print("Triton ready!")
-                return
-        except subprocess.TimeoutExpired:
-            pass
         
-        if i < timeout:
-            time.sleep(1)
-    
-    print(f"Triton not ready after {timeout}s. Printing logs...")
-    repo_root = get_repo_root()
-    subprocess.run(
-        ["docker", "compose", "--profile", "triton", "logs", "triton"],
-        cwd=repo_root
-    )
-    raise RuntimeError("Triton failed to start")
+        with open(batch_path, "rb") as f:
+            data = pickle.load(f, encoding="latin1")
+        
+        images = data["data"]
+        labels = data["labels"]
+        
+        if not (0 <= index < len(images)):
+            raise IndexError(f"Index {index} out of range (0-{len(images)-1})")
+        
+        # Reshape from flat to 32x32 RGB
+        img_flat = images[index]
+        r = img_flat[0:1024].reshape(32, 32)
+        g = img_flat[1024:2048].reshape(32, 32)
+        b = img_flat[2048:3072].reshape(32, 32)
+        img = np.stack([r, g, b], axis=-1).astype(np.uint8)
+        
+        label = labels[index]
+        
+        return img, label
 
 
-def load_cifar10_image(dataset_dir: Path, index: int) -> Tuple[np.ndarray, int]:
-    """Load a CIFAR-10 image."""
-    batch_path = dataset_dir / "data_batch_1"
-    if not batch_path.exists():
-        raise FileNotFoundError(f"Could not find {batch_path}. Run with --setup first.")
+class TritonInferenceClient:
+    """Client for Triton inference server."""
     
-    with open(batch_path, "rb") as f:
-        data = pickle.load(f, encoding="latin1")
-    
-    images = data["data"]
-    labels = data["labels"]
-    
-    if not (0 <= index < len(images)):
-        raise IndexError(f"Index {index} out of range (0-{len(images)-1})")
-    
-    img_flat = images[index]
-    label = labels[index]
-    
-    # Reshape from flat to 32x32 RGB
-    r = img_flat[0:1024].reshape(32, 32)
-    g = img_flat[1024:2048].reshape(32, 32)
-    b = img_flat[2048:3072].reshape(32, 32)
-    img = np.stack([r, g, b], axis=-1).astype(np.uint8)
-    
-    return img, label
-
-
-def preprocess(img: np.ndarray) -> np.ndarray:
-    """Preprocess image for ResNet50 (ImageNet normalization)."""
-    # Resize to 224x224
-    pil = Image.fromarray(img)
-    pil = pil.resize((224, 224), Image.BILINEAR)
-    arr = np.asarray(pil).astype(np.float32) / 255.0
-    
-    # ImageNet mean/std normalization
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-    arr = (arr - mean) / std
-    
-    # Convert to NCHW
-    chw = np.transpose(arr, (2, 0, 1))
-    nchw = np.expand_dims(chw, axis=0)
-    
-    return nchw
-
-
-def run_inference(
-    server_url: str,
-    model: str,
-    dataset_dir: Path,
-    index: int,
-    input_name: str,
-    output_name: str
-):
-    """Run inference on a CIFAR-10 image."""
-    # Load and preprocess
-    img, _ = load_cifar10_image(dataset_dir, index)
-    tensor = preprocess(img)
-    
-    # Inference
-    try:
-        client = httpclient.InferenceServerClient(url=server_url, verbose=False)
+    def __init__(
+        self,
+        server_url: str = "localhost:8000",
+        model_name: str = "resnet50",
+        input_name: str = "gpu_0/data_0",
+        output_name: str = "gpu_0/softmax_1",
+        verbose: bool = False
+    ):
+        """
+        Initialize Triton inference client.
         
-        infer_input = httpclient.InferInput(input_name, tensor.shape, "FP32")
-        infer_input.set_data_from_numpy(tensor, binary_data=True)
+        Args:
+            server_url: Triton server URL (host:port)
+            model_name: Model name to query
+            input_name: Input tensor name
+            output_name: Output tensor name
+            verbose: Enable verbose logging
+        """
+        self.server_url = server_url
+        self.model_name = model_name
+        self.input_name = input_name
+        self.output_name = output_name
+        self.verbose = verbose
         
-        infer_output = httpclient.InferRequestedOutput(output_name, binary_data=True)
+        self._client = httpclient.InferenceServerClient(
+            url=server_url,
+            verbose=verbose
+        )
         
-        response = client.infer(model_name=model, inputs=[infer_input], outputs=[infer_output])
-        output_data = response.as_numpy(output_name)
+    def predict(self, image: np.ndarray, top_k: int = 5) -> List[int]:
+        """
+        Run inference on preprocessed image.
         
-        if output_data is None:
-            raise RuntimeError("No output data returned from Triton")
+        Args:
+            image: Preprocessed image tensor (1CHW, FP32)
+            top_k: Number of top predictions to return
+            
+        Returns:
+            List of top-k class indices
+            
+        Raises:
+            InferenceServerException: If inference fails
+        """
+        try:
+            # Prepare input
+            infer_input = httpclient.InferInput(
+                self.input_name,
+                image.shape,
+                "FP32"
+            )
+            infer_input.set_data_from_numpy(image, binary_data=True)
+            
+            # Prepare output
+            infer_output = httpclient.InferRequestedOutput(
+                self.output_name,
+                binary_data=True
+            )
+            
+            # Run inference
+            response = self._client.infer(
+                model_name=self.model_name,
+                inputs=[infer_input],
+                outputs=[infer_output]
+            )
+            
+            # Extract predictions
+            output_data = response.as_numpy(self.output_name)
+            if output_data is None:
+                raise RuntimeError("No output data returned from Triton")
+            
+            # Get top-k predictions
+            logits = output_data[0]
+            top_indices = np.argsort(-logits)[:top_k]
+            
+            return top_indices.tolist()
+            
+        except InferenceServerException as e:
+            raise SystemExit(f"Triton inference failed: {e}")
+            
+    def predict_from_cifar10(
+        self,
+        dataset_dir: Path,
+        index: int = 0,
+        top_k: int = 5
+    ) -> List[int]:
+        """
+        Run inference on CIFAR-10 image.
         
-        # Get top-5 predictions
-        logits = output_data[0]
-        top5 = np.argsort(-logits)[:5]
+        Args:
+            dataset_dir: CIFAR-10 dataset directory
+            index: Image index (0-9999)
+            top_k: Number of top predictions
+            
+        Returns:
+            List of top-k class indices
+        """
+        # Load image
+        dataset = CIFAR10Dataset(dataset_dir)
+        img, label = dataset.load_image(index)
         
-        print(f"Top-5 class indices: {top5.tolist()}")
-        print("Note: CIFAR-10 labels don't match ImageNet classes; this is a smoke test.")
+        # Preprocess
+        preprocessor = ImagePreprocessor()
+        tensor = preprocessor.preprocess(img)
         
-    except InferenceServerException as e:
-        raise SystemExit(f"Triton inference failed: {e}")
-
-
-def smoke_test():
-    """Run full end-to-end smoke test."""
-    print("=== Starting Smoke Test ===\n")
-    
-    # Setup
-    setup_model()
-    download_data()
-    
-    # Start server
-    start_triton()
-    wait_for_triton()
-    
-    # Run inference
-    repo_root = get_repo_root()
-    dataset_dir = repo_root / "data" / "cifar-10-batches-py"
-    
-    print("\n==> Running inference...")
-    run_inference(
-        server_url="localhost:8000",
-        model="resnet50",
-        dataset_dir=dataset_dir,
-        index=0,
-        input_name="gpu_0/data_0",
-        output_name="gpu_0/softmax_1"
-    )
-    
-    print("\n=== Smoke Test Complete ===")
+        # Predict
+        return self.predict(tensor, top_k=top_k)
+        
+    def predict_from_file(
+        self,
+        image_path: Path,
+        top_k: int = 5
+    ) -> List[int]:
+        """
+        Run inference on image file.
+        
+        Args:
+            image_path: Path to image file
+            top_k: Number of top predictions
+            
+        Returns:
+            List of top-k class indices
+        """
+        # Load image
+        img = Image.open(image_path).convert("RGB")
+        img_array = np.asarray(img)
+        
+        # Preprocess
+        preprocessor = ImagePreprocessor()
+        tensor = preprocessor.preprocess(img_array)
+        
+        # Predict
+        return self.predict(tensor, top_k=top_k)
 
 
 def main():
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Triton ResNet50 client with setup and smoke test"
+        description="Triton ResNet50 inference client"
     )
     
-    # Mode selection
-    mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument("--setup", action="store_true", help="Setup model and data only")
-    mode_group.add_argument("--smoke-test", action="store_true", help="Run full smoke test")
+    # Server configuration
+    parser.add_argument(
+        "--server-url",
+        default="localhost:8000",
+        help="Triton server URL (default: localhost:8000)"
+    )
+    parser.add_argument(
+        "--model",
+        default="resnet50",
+        help="Model name (default: resnet50)"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging"
+    )
     
-    # Inference options
-    parser.add_argument("--server-url", default="localhost:8000", help="Triton server URL")
-    parser.add_argument("--model", default="resnet50", help="Model name")
-    parser.add_argument("--dataset-dir", help="Dataset directory (default: data/cifar-10-batches-py)")
-    parser.add_argument("--index", type=int, default=0, help="CIFAR-10 image index (0-9999)")
-    parser.add_argument("--input-name", default="gpu_0/data_0", help="Model input tensor name")
-    parser.add_argument("--output-name", default="gpu_0/softmax_1", help="Model output tensor name")
+    # Input source (mutually exclusive)
+    input_group = parser.add_mutually_exclusive_group(required=False)
+    input_group.add_argument(
+        "--index",
+        type=int,
+        default=0,
+        help="CIFAR-10 image index (0-9999, default: 0)"
+    )
+    input_group.add_argument(
+        "--image",
+        type=Path,
+        help="Path to custom image file"
+    )
+    
+    # Dataset configuration
+    parser.add_argument(
+        "--dataset-dir",
+        type=Path,
+        help="CIFAR-10 dataset directory (default: data/cifar-10-batches-py)"
+    )
+    
+    # Model tensor names
+    parser.add_argument(
+        "--input-name",
+        default="gpu_0/data_0",
+        help="Input tensor name (default: gpu_0/data_0)"
+    )
+    parser.add_argument(
+        "--output-name",
+        default="gpu_0/softmax_1",
+        help="Output tensor name (default: gpu_0/softmax_1)"
+    )
+    
+    # Output
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="Number of top predictions (default: 5)"
+    )
     
     args = parser.parse_args()
     
-    # Execute mode
-    if args.setup:
-        setup_model()
-        download_data()
-    elif args.smoke_test:
-        smoke_test()
-    else:
-        # Run inference
-        repo_root = get_repo_root()
-        dataset_dir = Path(args.dataset_dir) if args.dataset_dir else repo_root / "data" / "cifar-10-batches-py"
+    # Initialize client
+    client = TritonInferenceClient(
+        server_url=args.server_url,
+        model_name=args.model,
+        input_name=args.input_name,
+        output_name=args.output_name,
+        verbose=args.verbose
+    )
+    
+    # Run inference
+    try:
+        if args.image:
+            # Custom image file
+            if not args.image.exists():
+                print(f"Error: Image file not found: {args.image}")
+                sys.exit(1)
+            predictions = client.predict_from_file(args.image, top_k=args.top_k)
+            print(f"Top-{args.top_k} predictions for {args.image}:")
+        else:
+            # CIFAR-10 dataset
+            repo_root = Path(__file__).resolve().parent.parent.parent
+            dataset_dir = args.dataset_dir or repo_root / "data" / "cifar-10-batches-py"
+            
+            if not dataset_dir.exists():
+                print(f"Error: Dataset not found at {dataset_dir}")
+                print("Run 'python setup.py --data' to download it")
+                sys.exit(1)
+            
+            predictions = client.predict_from_cifar10(
+                dataset_dir,
+                index=args.index,
+                top_k=args.top_k
+            )
+            print(f"Top-{args.top_k} predictions for CIFAR-10 image {args.index}:")
         
-        if not dataset_dir.exists():
-            print(f"Dataset not found at {dataset_dir}")
-            print("Run with --setup to download it")
-            sys.exit(1)
+        print(predictions)
         
-        run_inference(
-            server_url=args.server_url,
-            model=args.model,
-            dataset_dir=dataset_dir,
-            index=args.index,
-            input_name=args.input_name,
-            output_name=args.output_name
-        )
+        if not args.image:
+            print("\nNote: CIFAR-10 labels don't match ImageNet classes.")
+            
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
