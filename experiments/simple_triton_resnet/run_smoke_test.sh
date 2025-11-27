@@ -42,7 +42,11 @@ echo "==> Waiting for Triton to be ready..."
 for i in {1..60}; do
   if curl -s http://localhost:8000/v2/health/ready | grep -q OK; then echo "Triton ready!"; break; fi
   sleep 1
-  if [ "$i" -eq 60 ]; then echo "Triton not ready after 60s"; exit 1; fi
+  if [ "$i" -eq 60 ]; then
+    echo "Triton not ready after 60s. Printing logs..."
+    docker compose --profile triton logs triton
+    exit 1
+  fi
 done
 
 echo "==> Downloading CIFAR-10 dataset..."
