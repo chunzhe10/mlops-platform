@@ -12,5 +12,5 @@ services:
       - ARTIFACT_ROOT=${ARTIFACT_ROOT}
       - PORT=5000
     volumes:
-      - ./mlflow/data:/mlflow
+      - ./data:/mlflow
     restart: unless-stopped
