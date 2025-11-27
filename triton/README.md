@@ -7,6 +7,7 @@ What I added
 - `Dockerfile` — simple image that layers on an official Triton runtime image and copies `models/` into the container.
 - `docker-compose.yml` — example compose file to build/run the image and expose Triton ports.
 - `models/` — directory (create model repositories here). Place model repositories under `triton/models/<your-model-repo>`.
+- `models/` — directory for model repositories. It's intentionally empty and populated via `add_dummy_model.sh` or your own download scripts. Do not commit large model files.
 
 Quick start
 

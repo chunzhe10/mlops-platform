@@ -1,0 +1,13 @@
+# Ignore Triton downloaded models and large artifacts
+triton/models/**
+!triton/models/.gitkeep
+
+# Common large ML artifacts
+**/*.onnx
+**/*.pt
+**/*.pb
+**/artifacts/**
+
+# Python cache
+__pycache__/
+*.pyc
