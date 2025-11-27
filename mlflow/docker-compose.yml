@@ -1,0 +1,16 @@
+services:
+  mlflow:
+    profiles: ["full", "mlflow"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mlflow-server:local
+    ports:
+      - "5000:5000"
+    environment:
+      - BACKEND_URI=${BACKEND_URI}
+      - ARTIFACT_ROOT=${ARTIFACT_ROOT}
+      - PORT=5000
+    volumes:
+      - ./mlflow/data:/mlflow
+    restart: unless-stopped

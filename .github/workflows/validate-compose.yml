@@ -1,0 +1,33 @@
+name: Validate Docker Compose
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  validate:
+    name: Validate compose files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate root compose (with include directive)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/workdir" -w /workdir docker/compose:2.23.0 config
+
+      - name: Discover and validate component compose files
+        run: |
+          set -euo pipefail
+          echo "Searching for component docker-compose.yml files (excluding .github)..."
+          # Find all docker-compose.yml files excluding the workflow directory
+          IFS=$'\n' read -r -d '' -a files < <(find . -type f -name 'docker-compose.yml' -not -path './.github/*' -print0 || true)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No component compose files found."
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "\nValidating: $f"
+            docker run --rm -v "${{ github.workspace }}:/workdir" -w /workdir docker/compose:2.17.0 -f "$f" config
+          done

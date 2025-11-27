@@ -1,0 +1,3 @@
+include:
+  - mlflow/docker-compose.yml
+  - triton/docker-compose.yml
