@@ -15,7 +15,7 @@ jobs:
 
       - name: Validate root compose (with include directive)
         run: |
-          docker run --rm -v "${{ github.workspace }}:/workdir" -w /workdir docker/compose:2.23.0 config
+          docker run --rm -v "${{ github.workspace }}:/workdir" -w /workdir docker/compose:latest config
 
       - name: Discover and validate component compose files
         run: |
@@ -29,5 +29,5 @@ jobs:
           fi
           for f in "${files[@]}"; do
             echo "\nValidating: $f"
-            docker run --rm -v "${{ github.workspace }}:/workdir" -w /workdir docker/compose:2.17.0 -f "$f" config
+            docker run --rm -v "${{ github.workspace }}:/workdir" -w /workdir docker/compose:latest -f "$f" config
           done
