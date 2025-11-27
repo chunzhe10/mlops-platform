@@ -8,6 +8,11 @@ triton/models/**
 **/*.pb
 **/artifacts/**
 
+# Datasets
+data/cifar-10-batches-py/
+data/**/*.tar.gz
+data/**/*.zip
+
 # Python cache
 __pycache__/
 *.pyc
