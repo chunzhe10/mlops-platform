@@ -15,31 +15,41 @@ This experiment:
 
 ## Quick Start
 
-Run the automated smoke test:
-
+**Option 1: Full automated smoke test**
 ```bash
-# From repository root
-bash experiments/simple_triton_resnet/run_smoke_test.sh
+# Install dependencies first (once)
+pip install -r experiments/simple_triton_resnet/requirements.txt
+
+# Run everything: setup model, download data, start Triton, run inference
+python experiments/simple_triton_resnet/client.py --smoke-test
 ```
 
-This script:
-1. Creates Python 3.10 virtual environment with `uv`
-2. Installs `tritonclient[http]` and dependencies
-3. Downloads ResNet50 model to `triton/models/resnet50/`
-4. Builds and starts Triton container
-5. Downloads CIFAR-10 dataset to `data/`
-6. Runs inference on test image
-7. Prints top-5 class predictions
+**Option 2: Step-by-step**
+```bash
+# 1. Setup (downloads model and dataset)
+python experiments/simple_triton_resnet/client.py --setup
+
+# 2. Start Triton manually
+docker compose --profile triton up -d --build
+
+# 3. Run inference
+python experiments/simple_triton_resnet/client.py --index 0
+```
 
 ## Manual Setup
 
-### 1. Setup Model
+The `client.py` script includes built-in setup functions. You can also run each step manually:
+
+### 1. Setup Model and Data
 
 ```bash
-# Downloads ResNet50 ONNX to triton/models/resnet50/1/model.onnx
-# Generates config.pbtxt with correct tensor names and shapes
-bash experiments/simple_triton_resnet/setup_model.sh
+# All-in-one setup command
+python experiments/simple_triton_resnet/client.py --setup
 ```
+
+This downloads:
+- ResNet50 ONNX model to `triton/models/resnet50/1/model.onnx`
+- CIFAR-10 dataset to `data/cifar-10-batches-py/`
 
 ### 2. Start Triton Server
 
@@ -48,22 +58,11 @@ bash experiments/simple_triton_resnet/setup_model.sh
 docker compose --profile triton up -d --build
 ```
 
-### 3. Download Test Dataset
+### 3. Run Inference
 
 ```bash
-# Downloads CIFAR-10 to data/cifar-10-batches-py/
-bash experiments/simple_triton_resnet/download_data.sh
-```
-
-### 4. Run Inference Client
-
-```bash
-# Create virtual environment
-uv venv --python 3.10 experiments/simple_triton_resnet/.venv
-source experiments/simple_triton_resnet/.venv/bin/activate
-
 # Install dependencies
-uv pip install -r experiments/simple_triton_resnet/requirements.txt
+pip install -r experiments/simple_triton_resnet/requirements.txt
 
 # Run inference on image index 0
 python experiments/simple_triton_resnet/client.py --index 0
@@ -114,24 +113,20 @@ curl http://localhost:8000/v2/models/resnet50
 
 ```
 experiments/simple_triton_resnet/
-├── README.md              # This file
-├── client.py              # Triton HTTP inference client
-├── requirements.txt       # Python dependencies (tritonclient, pillow, numpy)
-├── setup_model.sh         # Downloads ResNet50 and generates config.pbtxt
-├── download_data.sh       # Downloads CIFAR-10 dataset
-├── run_smoke_test.sh      # Automated end-to-end test
-└── .venv/                 # Virtual environment (created by smoke test)
+├── README.md              # Documentation
+├── client.py              # All-in-one: inference + setup + smoke test
+└── requirements.txt       # Python dependencies
 ```
+
+The client supports multiple modes:
+- `python client.py --index 0` - Run inference
+- `python client.py --setup` - Download model and data
+- `python client.py --smoke-test` - Full end-to-end test
 
 ## Suggested Improvements
 
 ### Organization
-1. **Create `scripts/` subdirectory:**
-   - Move `setup_model.sh`, `download_data.sh`, `run_smoke_test.sh` → `scripts/`
-   - Keep `client.py` and `requirements.txt` at root
-   - Cleaner separation between automation scripts and client code
-
-2. **Add `.gitignore` for experiment:**
+1. **Add `.gitignore` for experiment:**
    ```
    .venv/
    *.pyc
@@ -139,45 +134,23 @@ experiments/simple_triton_resnet/
    .pytest_cache/
    ```
 
-3. **Create `tests/` directory:**
+2. **Create `tests/` directory:**
    - Add unit tests for preprocessing functions
    - Add integration test fixture with mock responses
-   - Separate test data from production scripts
+   - Use pytest for test automation
 
 ### Code Quality
 1. **Extract preprocessing to separate module:**
-   - `preprocessing.py` with `resize_and_normalize()` function
-   - Reusable across different experiments
-   - Easier to unit test
+   - `preprocessing.py` with reusable functions
+   - Easier to unit test and share across experiments
 
 2. **Add configuration file:**
    - `config.yaml` with server URL, model name, tensor names
-   - Avoid hardcoded values in client.py
    - Environment-specific configs (dev/staging/prod)
 
 3. **Add logging:**
    - Use Python `logging` instead of `print()`
    - Configurable log levels (DEBUG/INFO/WARNING)
-   - Log to file for debugging
-
-### Proposed Structure
-```
-experiments/simple_triton_resnet/
-├── README.md
-├── client.py              # Main inference client
-├── requirements.txt
-├── config.yaml           # NEW: Configuration
-├── preprocessing.py      # NEW: Shared preprocessing functions
-├── .gitignore           # NEW: Ignore venv and cache
-├── scripts/             # NEW: Automation scripts
-│   ├── setup_model.sh
-│   ├── download_data.sh
-│   └── run_smoke_test.sh
-└── tests/               # NEW: Test suite
-    ├── __init__.py
-    ├── test_preprocessing.py
-    └── test_client.py
-```
 
 ### Additional Enhancements
 1. **Add performance metrics:**
@@ -186,15 +159,9 @@ experiments/simple_triton_resnet/
    - Log to CSV for analysis
 
 2. **Support batch inference:**
-   - Modify client to send multiple images
+   - Send multiple images in one request
    - Compare single vs batch performance
 
-3. **Add model comparison:**
-   - Download different ResNet variants (18, 34, 101)
-   - Compare accuracy/speed tradeoffs
-   - Automate model benchmarking
-
-4. **CI/CD integration:**
+3. **CI/CD integration:**
    - GitHub Actions workflow to run smoke test
    - Fail PR if Triton inference breaks
-   - Cache Docker images for faster builds
